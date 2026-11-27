@@ -1,6 +1,11 @@
+
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://gail-jlpl-portal-backend.vercel.app/api/$1"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
