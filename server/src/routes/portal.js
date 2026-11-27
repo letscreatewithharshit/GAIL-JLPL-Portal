@@ -7,7 +7,11 @@ import { prisma } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
-const uploadDir = path.resolve("uploads");
+// Vercel's deployed filesystem is read-only. Use its writable temporary directory
+// for uploads; locally, keep uploads inside the server project.
+const uploadDir = process.env.VERCEL
+  ? path.join("/tmp", "uploads")
+  : path.resolve(process.cwd(), "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
 const allowed = new Set([
   "image/jpeg",
@@ -31,15 +35,22 @@ const storage = multer.diskStorage({
       `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${path.extname(file.originalname).toLowerCase()}`,
     ),
 });
-const makeUploader = (mimeTypes) => multer({
-  storage,
-  limits: { fileSize: 100 * 1024 * 1024 },
-  fileFilter: (req, file, cb) =>
-    mimeTypes.has(file.mimetype) ? cb(null, true) : cb(new Error("Unsupported file type")),
-});
+const makeUploader = (mimeTypes) =>
+  multer({
+    storage,
+    limits: { fileSize: 100 * 1024 * 1024 },
+    fileFilter: (req, file, cb) =>
+      mimeTypes.has(file.mimetype)
+        ? cb(null, true)
+        : cb(new Error("Unsupported file type")),
+  });
 const uploader = makeUploader(allowed);
-const imageUploader = makeUploader(new Set(["image/jpeg", "image/png", "image/webp"]));
-const organogramUploader = makeUploader(new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]));
+const imageUploader = makeUploader(
+  new Set(["image/jpeg", "image/png", "image/webp"]),
+);
+const organogramUploader = makeUploader(
+  new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]),
+);
 const publicStatus = { status: "PUBLISHED" };
 
 router.get("/portal", async (req, res, next) => {
@@ -289,30 +300,43 @@ router.get("/documents", async (req, res, next) => {
 router.post("/admin/directory/import", requireAuth, (req, res, next) =>
   uploader.array("files", 20)(req, res, async (uploadError) => {
     if (uploadError) {
-      return res.status(400).json({ error: uploadError.message || "File upload failed." });
+      return res
+        .status(400)
+        .json({ error: uploadError.message || "File upload failed." });
     }
 
     const files = req.files || [];
     if (!files.length) {
-      return res.status(400).json({ error: "Please select one or more Excel/CSV files." });
+      return res
+        .status(400)
+        .json({ error: "Please select one or more Excel/CSV files." });
     }
 
-    const invalidFile = files.find((file) =>
-      ![".xlsx", ".xls", ".csv"].includes(path.extname(file.originalname).toLowerCase()),
+    const invalidFile = files.find(
+      (file) =>
+        ![".xlsx", ".xls", ".csv"].includes(
+          path.extname(file.originalname).toLowerCase(),
+        ),
     );
     if (invalidFile) {
       files.forEach((file) => fs.unlink(file.path, () => {}));
-      return res.status(400).json({ error: "Only .xlsx, .xls or .csv files are allowed." });
+      return res
+        .status(400)
+        .json({ error: "Only .xlsx, .xls or .csv files are allowed." });
     }
 
     try {
       const regionId = String(req.body.regionId || "").trim();
       if (!regionId) {
         files.forEach((file) => fs.unlink(file.path, () => {}));
-        return res.status(400).json({ error: "Select a region before uploading files." });
+        return res
+          .status(400)
+          .json({ error: "Select a region before uploading files." });
       }
 
-      const region = await prisma.region.findUnique({ where: { id: regionId } });
+      const region = await prisma.region.findUnique({
+        where: { id: regionId },
+      });
       if (!region) {
         files.forEach((file) => fs.unlink(file.path, () => {}));
         return res.status(404).json({ error: "Region not found." });
@@ -379,12 +403,29 @@ router.post("/uploads", requireAuth, (req, res, next) =>
     if (error)
       return res.status(400).json({ error: error.message || "Upload failed" });
     if (!req.file)
+      return res.status(400).json({
+        error:
+          "Select a supported file (JPG, PNG, WebP, MP4/WebM video, PDF, DOC/DOCX, XLS/XLSX), max 100 MB.",
+      });
+    res.status(201).json({
+      url: `/uploads/${req.file.filename}`,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
+    });
+  }),
+);
+
+router.post("/uploads/images", requireAuth, (req, res) =>
+  imageUploader.single("file")(req, res, (error) => {
+    if (error)
       return res
         .status(400)
-        .json({
-          error:
-            "Select a supported file (JPG, PNG, WebP, MP4/WebM video, PDF, DOC/DOCX, XLS/XLSX), max 100 MB.",
-        });
+        .json({ error: error.message || "Image upload failed." });
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ error: "Only JPG, PNG or WebP images are allowed." });
     res
       .status(201)
       .json({
@@ -395,19 +436,24 @@ router.post("/uploads", requireAuth, (req, res, next) =>
       });
   }),
 );
-
-router.post("/uploads/images", requireAuth, (req, res) =>
-  imageUploader.single("file")(req, res, (error) => {
-    if (error) return res.status(400).json({ error: error.message || "Image upload failed." });
-    if (!req.file) return res.status(400).json({ error: "Only JPG, PNG or WebP images are allowed." });
-    res.status(201).json({ url: `/uploads/${req.file.filename}`, fileName: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size });
-  }),
-);
 router.post("/uploads/organogram", requireAuth, (req, res) =>
   organogramUploader.single("file")(req, res, (error) => {
-    if (error) return res.status(400).json({ error: error.message || "Organogram upload failed." });
-    if (!req.file) return res.status(400).json({ error: "Only PDF, JPG, PNG or WebP files are allowed." });
-    res.status(201).json({ url: `/uploads/${req.file.filename}`, fileName: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size });
+    if (error)
+      return res
+        .status(400)
+        .json({ error: error.message || "Organogram upload failed." });
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ error: "Only PDF, JPG, PNG or WebP files are allowed." });
+    res
+      .status(201)
+      .json({
+        url: `/uploads/${req.file.filename}`,
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        fileSize: req.file.size,
+      });
   }),
 );
 
@@ -595,6 +641,7 @@ const fanOut = new Set([
   "keyFigures",
   "pipelines",
 ]);
+
 const KEY_FIGURE_LABELS = [
   "Pipeline Length",
   "Throughput Capacity",
@@ -605,6 +652,7 @@ const KEY_FIGURE_LABELS = [
   "Pipe Diameters",
   "Sectionalizing Valves",
 ];
+
 function createRecord(resource, config, data) {
   if (resource === "keyFigures") {
     return config.model.upsert({
@@ -620,8 +668,10 @@ function payloadFor(config, body) {
   const data = {};
   for (const field of config.fields)
     if (body[field] !== undefined) data[field] = body[field];
+
   for (const field of ["regionId", "pipelineId", "departmentId", "parentId"])
     if (data[field] === "") data[field] = null;
+
   if (data.slot !== undefined) {
     data.slot = Number(data.slot);
     if (!Number.isInteger(data.slot) || data.slot < 1 || data.slot > 8)
@@ -631,12 +681,15 @@ function payloadFor(config, body) {
       );
     if (!data.label) data.label = KEY_FIGURE_LABELS[data.slot - 1];
   }
+
   if (data.status === undefined && config.fields.includes("status"))
     data.status = "PUBLISHED";
+
   if (data.status && !["DRAFT", "PUBLISHED", "ARCHIVED"].includes(data.status))
     throw Object.assign(new Error("Invalid publication status"), {
       statusCode: 400,
     });
+
   for (const field of ["eventDate", "meetingDate"])
     if (data[field]) {
       const parsed = new Date(data[field]);
@@ -644,22 +697,29 @@ function payloadFor(config, body) {
         throw Object.assign(new Error(`Invalid ${field}`), { statusCode: 400 });
       data[field] = parsed;
     }
+
   if (data.fileSize !== undefined && data.fileSize !== null)
     data.fileSize = Number(data.fileSize);
+
   if (data.sortOrder !== undefined)
     data.sortOrder = Number(data.sortOrder) || 0;
+
   if (typeof data.availableRegions === "string")
     data.availableRegions = data.availableRegions
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
+
   if (data.isActive !== undefined)
     data.isActive = data.isActive === true || data.isActive === "true";
+
   for (const [key, value] of Object.entries(data))
     if (typeof value === "string" && value.length > 12000)
       throw Object.assign(new Error(`${key} is too long`), { statusCode: 400 });
+
   return data;
 }
+
 function recordWhere(resource, id) {
   return resource === "regions" || resource === "modules" ? { id } : { id };
 }
@@ -674,11 +734,13 @@ const withRegion = new Set([
   "organogram",
   "keyFigures",
 ]);
+
 router.get("/admin/:resource", requireAuth, async (req, res, next) => {
   try {
     const config = configs[req.params.resource];
     if (!config)
       return res.status(404).json({ error: "Unknown content section" });
+
     const rows =
       req.params.resource === "regions"
         ? await config.model.findMany({
@@ -696,16 +758,19 @@ router.get("/admin/:resource", requireAuth, async (req, res, next) => {
                 : {}),
               orderBy: { createdAt: "desc" },
             });
+
     res.json(rows);
   } catch (error) {
     next(error);
   }
 });
+
 router.post("/admin/:resource", requireAuth, async (req, res, next) => {
   try {
     const config = configs[req.params.resource];
     if (!config)
       return res.status(404).json({ error: "Unknown content section" });
+
     for (const field of config.required)
       if (
         req.body[field] === undefined ||
@@ -713,8 +778,10 @@ router.post("/admin/:resource", requireAuth, async (req, res, next) => {
         req.body[field] === ""
       )
         return res.status(400).json({ error: `${field} is required` });
+
     const resource = req.params.resource;
     const body = { ...req.body };
+
     if (body.regionId === ALL_REGIONS) {
       if (nullableRegion.has(resource)) {
         body.regionId = null;
@@ -722,6 +789,7 @@ router.post("/admin/:resource", requireAuth, async (req, res, next) => {
         const regions = await prisma.region.findMany({ select: { id: true } });
         if (!regions.length)
           return res.status(400).json({ error: "No regions exist yet." });
+
         const rows = await prisma.$transaction(
           regions.map((region) => {
             const data = payloadFor(config, {
@@ -732,6 +800,7 @@ router.post("/admin/:resource", requireAuth, async (req, res, next) => {
             return createRecord(resource, config, data);
           }),
         );
+
         return res.status(201).json({ count: rows.length, rows });
       } else {
         return res
@@ -739,29 +808,32 @@ router.post("/admin/:resource", requireAuth, async (req, res, next) => {
           .json({ error: "This section does not support All Regions." });
       }
     }
+
     const row = await createRecord(resource, config, payloadFor(config, body));
     res.status(201).json(row);
   } catch (error) {
     next(error);
   }
 });
+
 router.put("/admin/:resource/:id", requireAuth, async (req, res, next) => {
   try {
     const resource = req.params.resource;
     const config = configs[resource];
     if (!config)
       return res.status(404).json({ error: "Unknown content section" });
+
     const body = { ...req.body };
+
     if (body.regionId === ALL_REGIONS) {
       if (nullableRegion.has(resource)) body.regionId = null;
       else
-        return res
-          .status(400)
-          .json({
-            error:
-              "Choose one specific region when editing. To add the same record to every region, add it as a new record with All Regions selected.",
-          });
+        return res.status(400).json({
+          error:
+            "Choose one specific region when editing. To add the same record to every region, add it as a new record with All Regions selected.",
+        });
     }
+
     for (const field of config.required)
       if (
         body[field] === undefined ||
@@ -769,23 +841,28 @@ router.put("/admin/:resource/:id", requireAuth, async (req, res, next) => {
         body[field] === ""
       )
         return res.status(400).json({ error: `${field} is required` });
+
     const row = await config.model.update({
       where: recordWhere(resource, req.params.id),
       data: payloadFor(config, body),
     });
+
     res.json(row);
   } catch (error) {
     next(error);
   }
 });
+
 router.delete("/admin/:resource/:id", requireAuth, async (req, res, next) => {
   try {
     const config = configs[req.params.resource];
     if (!config)
       return res.status(404).json({ error: "Unknown content section" });
+
     await config.model.delete({
       where: recordWhere(req.params.resource, req.params.id),
     });
+
     res.status(204).end();
   } catch (error) {
     next(error);
