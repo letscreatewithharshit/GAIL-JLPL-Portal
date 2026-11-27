@@ -1,0 +1,2 @@
+-- Preserve legacy User, AuditLog tables and UserRole enum.
+-- The current application uses environment-configured admin authentication.

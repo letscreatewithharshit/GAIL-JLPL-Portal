@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model PortalSetting {
+  id             String   @id @default("main")
+  heroTitle      String?
+  heroTitleHi    String?
+  heroSubtitle   String?
+  heroSubtitleHi String?
+  heroImage      String?
+  heroVideo      String?
+  announcement   String?
+  announcementHi String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Region {
+  id            String           @id
+  name          String
+  description   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  nameHi        String?
+  descriptionHi String?
+  image         String?
+  video         String?
+  directoryFileUrl String?
+  directoryFiles DirectoryFile[]
+  documents     Document[]
+  employees     Employee[]
+  events        Event[]
+  galleryImages GalleryImage[]
+  highlights    Highlight[]
+  keyFigures    KeyFigure[]
+  meetings      Meeting[]
+  organogram    OrganogramNode[]
+  pipelines     Pipeline[]
+  users         User[]
+}
+
+
+model DirectoryFile {
+  id        String   @id @default(cuid())
+  fileName  String
+  fileUrl   String
+  mimeType  String?
+  fileSize  Int?
+  regionId  String
+  createdAt DateTime @default(now())
+  region    Region   @relation(fields: [regionId], references: [id], onDelete: Cascade)
+
+  @@index([regionId, createdAt])
+}
+
+model User {
+  id           String   @id
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(VIEWER)
+  regionId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+
+  region    Region?    @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  auditLogs AuditLog[]
+}
+
+model AuditLog {
+  id        String   @id
+  action    String
+  entity    String
+  entityId  String?
+  userId    String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model KeyFigure {
+  id        String   @id @default(cuid())
+  slot      Int
+  label     String
+  labelHi   String?
+  value     String
+  unit      String?
+  regionId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  region    Region   @relation(fields: [regionId], references: [id], onDelete: Cascade)
+
+  @@unique([regionId, slot])
+}
+
+model Pipeline {
+  id        String     @id @default(cuid())
+  name      String
+  regionId  String
+  createdAt DateTime   @default(now())
+  documents Document[]
+  employees Employee[]
+  meetings  Meeting[]
+  region    Region     @relation(fields: [regionId], references: [id], onDelete: Cascade)
+
+  @@unique([name, regionId])
+}
+
+model PortalModule {
+  id               String   @id
+  title            String
+  titleHi          String?
+  description      String?
+  descriptionHi    String?
+  icon             String   @default("FileText")
+  availableRegions String[]
+  sortOrder        Int      @default(0)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Department {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  name          String
+  description   String?
+  nameHi        String?
+  descriptionHi String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  employees     Employee[]
+}
+
+model Employee {
+  id            String      @id @default(cuid())
+  name          String
+  designation   String?
+  phone         String?
+  email         String?
+  regionId      String
+  pipelineId    String?
+  departmentId  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  nameHi        String?
+  designationHi String?
+  department    Department? @relation(fields: [departmentId], references: [id])
+  pipeline      Pipeline?   @relation(fields: [pipelineId], references: [id])
+  region        Region      @relation(fields: [regionId], references: [id])
+}
+
+model Highlight {
+  id          String        @id @default(cuid())
+  title       String
+  body        String
+  category    String?
+  status      PublishStatus @default(DRAFT)
+  regionId    String?
+  publishedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  titleHi     String?
+  bodyHi      String?
+  region      Region?       @relation(fields: [regionId], references: [id])
+
+  @@index([status, publishedAt])
+}
+
+model Event {
+  id            String        @id @default(cuid())
+  title         String
+  description   String?
+  eventDate     DateTime
+  venue         String?
+  regionId      String?
+  status        PublishStatus @default(DRAFT)
+  createdAt     DateTime      @default(now())
+  titleHi       String?
+  descriptionHi String?
+  venueHi       String?
+  imageUrl      String?
+  imageUrls     String[]      @default([])
+  updatedAt     DateTime      @updatedAt
+  region        Region?       @relation(fields: [regionId], references: [id])
+}
+
+model Meeting {
+  id          String        @id @default(cuid())
+  title       String
+  meetingDate DateTime
+  venue       String?
+  agenda      String?
+  minutesUrl  String?
+  regionId    String
+  pipelineId  String?
+  status      PublishStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  titleHi     String?
+  venueHi     String?
+  agendaHi    String?
+  pipeline    Pipeline?     @relation(fields: [pipelineId], references: [id])
+  region      Region        @relation(fields: [regionId], references: [id])
+
+  @@index([meetingDate, regionId])
+}
+
+model Document {
+  id            String        @id @default(cuid())
+  title         String
+  description   String?
+  category      String
+  fileName      String?
+  storageKey    String?
+  mimeType      String?
+  fileSize      Int?
+  regionId      String
+  pipelineId    String?
+  status        PublishStatus @default(DRAFT)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  titleHi       String?
+  descriptionHi String?
+  pipeline      Pipeline?     @relation(fields: [pipelineId], references: [id])
+  region        Region        @relation(fields: [regionId], references: [id])
+
+  @@index([category, regionId, status])
+}
+
+model GalleryImage {
+  id         String   @id @default(cuid())
+  title      String
+  caption    String?
+  storageKey String
+  regionId   String
+  createdAt  DateTime @default(now())
+  titleHi    String?
+  captionHi  String?
+  region     Region   @relation(fields: [regionId], references: [id])
+}
+
+model OrganogramNode {
+  id            String   @id @default(cuid())
+  name          String
+  nameHi        String?
+  designation   String?
+  designationHi String?
+  parentId      String?
+  regionId      String?
+  sortOrder     Int      @default(0)
+  fileUrl       String?
+  fileName      String?
+  mimeType      String?
+  fileSize      Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  region        Region?  @relation(fields: [regionId], references: [id])
+
+  @@index([parentId, sortOrder])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  REGIONAL_ADMIN
+  DEPARTMENT_ADMIN
+  VIEWER
+}
+
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
